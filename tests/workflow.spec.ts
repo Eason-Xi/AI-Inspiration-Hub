@@ -103,8 +103,15 @@ test("图片与链接保存、手机布局与导航", async ({ page, request }) 
     await expect(
       page.getByRole("heading", { name: "AI 模型连接" }),
     ).toBeVisible();
-    await expect(page.locator(".sidebar")).toHaveCSS("transform", "matrix(1, 0, 0, 1, -236, 0)");
-    await page.screenshot({ path: "test-results/mobile.png", fullPage: true, animations: "disabled" });
+    await expect(page.locator(".sidebar")).toHaveCSS(
+      "transform",
+      "matrix(1, 0, 0, 1, -236, 0)",
+    );
+    await page.screenshot({
+      path: "test-results/mobile.png",
+      fullPage: true,
+      animations: "disabled",
+    });
   } finally {
     if (id) await request.delete("/api/nodes/" + id);
   }

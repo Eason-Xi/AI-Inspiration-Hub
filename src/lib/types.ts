@@ -43,6 +43,24 @@ export type Project = {
   color: string;
   status: string;
   createdAt: string;
+  nodeCount?: number;
+};
+export const projectStatuses = [
+  "探索中",
+  "进行中",
+  "暂停",
+  "完成",
+  "归档",
+] as const;
+export type AiTask = {
+  id: string;
+  nodeId: string;
+  mode: string;
+  status: "queued" | "running" | "retrying" | "done" | "failed" | "cancelled";
+  attempts: number;
+  maxAttempts: number;
+  nextRunAt: number;
+  error: string | null;
 };
 export type Settings = { baseUrl: string; model: string; configured: boolean };
 export type Workspace = {

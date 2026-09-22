@@ -1,7 +1,9 @@
 import { after } from "next/server";
 import { z } from "zod";
-import { getNode, patchNode } from "@/lib/db";
-import { analyzeNode } from "@/lib/ai";
+import { getNode } from "@/lib/db";
+import { enqueueAnalysis, cancelTask } from "@/lib/jobs";
+import { wakeWorker } from "@/lib/worker";
+import { modes } from "@/lib/validation";
 import { publicSettings } from "@/lib/settings";
 import { fail, jsonBody } from "@/lib/http";
 export async function POST(
@@ -17,20 +19,24 @@ export async function POST(
         { error: "请先在设置中连接 AI 模型" },
         { status: 409 },
       );
-    if (
-      n.aiState === "pending" &&
-      Date.now() - Date.parse(n.updatedAt) < 100000
-    )
-      return Response.json({ error: "正在生成，请稍候" }, { status: 409 });
     const { mode } = z
       .object({
-        mode: z.enum(["默认", "实用", "创意", "反向", "产品"]).default("默认"),
+        mode: z.enum(modes).default("默认"),
       })
       .parse(await jsonBody(req));
-    patchNode(id, { aiState: "pending", aiError: null });
-    after(() => analyzeNode(id, mode));
-    return Response.json({ ok: true });
+    const task = enqueueAnalysis(id, mode);
+    after(wakeWorker);
+    return Response.json({ ok: true, task }, { status: 202 });
   } catch (e) {
     return fail(e);
   }
+}
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  if (!getNode(id))
+    return Response.json({ error: "记录不存在" }, { status: 404 });
+  return Response.json({ task: cancelTask(id) });
 }

@@ -26,6 +26,7 @@ import {
   List,
   LoaderCircle,
   Menu,
+  Pencil,
   Plus,
   Search,
   Settings as SettingsIcon,
@@ -35,7 +36,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { Idea, Workspace, Settings, Project } from "@/lib/types";
-import { statuses } from "@/lib/types";
+import { statuses, projectStatuses } from "@/lib/types";
 import { api, send } from "@/lib/client";
 import NodeDetail from "./NodeDetail";
 import SettingsPanel from "./SettingsPanel";
@@ -60,6 +61,7 @@ export default function Hub() {
   const [mobile, setMobile] = useState(false);
   const [toast, setToast] = useState("");
   const [projectModal, setProjectModal] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | undefined>();
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const notify = useCallback((message: string) => setToast(message), []);
@@ -244,16 +246,18 @@ export default function Hub() {
           </button>
         </div>
         <div className="project-nav">
-          {projects.map((p) => (
-            <Link
-              href={"/project/" + p.id}
-              className={"nav-item " + (projectId === p.id ? "active" : "")}
-              key={p.id}
-            >
-              <Folder size={18} style={{ color: p.color }} />
-              <span className="truncate">{p.name}</span>
-            </Link>
-          ))}
+          {projects
+            .filter((p) => p.status !== "归档")
+            .map((p) => (
+              <Link
+                href={"/project/" + p.id}
+                className={"nav-item " + (projectId === p.id ? "active" : "")}
+                key={p.id}
+              >
+                <Folder size={18} style={{ color: p.color }} />
+                <span className="truncate">{p.name}</span>
+              </Link>
+            ))}
           <button
             className="nav-item muted"
             onClick={() => setProjectModal(true)}
@@ -387,6 +391,22 @@ export default function Hub() {
                     <Plus size={17} />
                     新建项目
                   </button>
+                ) : view === "project" && currentProject ? (
+                  <div className="project-heading-actions">
+                    <span className="project-state">
+                      {currentProject.status}
+                    </span>
+                    <button
+                      className="secondary"
+                      onClick={() => {
+                        setEditingProject(currentProject);
+                        setProjectModal(true);
+                      }}
+                    >
+                      <Pencil size={16} />
+                      编辑项目
+                    </button>
+                  </div>
                 ) : null}
               </div>
               {view === "settings" ? (
@@ -413,7 +433,7 @@ export default function Hub() {
                       <h2>{p.name}</h2>
                       <p>{p.description || "给这个项目留一点生长的空间。"}</p>
                       <div>
-                        查看项目记录 <ArrowRight size={16} />
+                        {p.nodeCount || 0} 条记录 <ArrowRight size={16} />
                       </div>
                     </Link>
                   ))}
@@ -763,12 +783,24 @@ export default function Hub() {
       )}
       {projectModal && (
         <ProjectDialog
-          onClose={() => setProjectModal(false)}
+          project={editingProject}
+          onClose={() => {
+            setProjectModal(false);
+            setEditingProject(undefined);
+          }}
+          onDeleted={(count) => {
+            setProjectModal(false);
+            setEditingProject(undefined);
+            reload();
+            router.push("/projects");
+            notify(`项目已删除，${count} 条记录已移回收件箱`);
+          }}
           onCreated={(p) => {
             setProjectModal(false);
+            setEditingProject(undefined);
             reload();
             router.push("/project/" + p.id);
-            notify("项目已创建");
+            notify(editingProject ? "项目已更新" : "项目已创建");
           }}
         />
       )}
@@ -1087,13 +1119,19 @@ function Composer({
 function ProjectDialog({
   onClose,
   onCreated,
+  project,
+  onDeleted,
 }: {
   onClose: () => void;
   onCreated: (p: Project) => void;
+  project?: Project;
+  onDeleted: (count: number) => void;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [color, setColor] = useState("#8b5cf6");
+  const [name, setName] = useState(project?.name || "");
+  const [description, setDescription] = useState(project?.description || "");
+  const [color, setColor] = useState(project?.color || "#8b5cf6");
+  const [status, setStatus] = useState(project?.status || "探索中");
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -1116,8 +1154,13 @@ function ProjectDialog({
           try {
             onCreated(
               await api<Project>(
-                "/api/projects",
-                send("POST", { name, description, color }),
+                project ? "/api/projects/" + project.id : "/api/projects",
+                send(project ? "PATCH" : "POST", {
+                  name,
+                  description,
+                  color,
+                  status,
+                }),
               ),
             );
           } catch (e) {
@@ -1128,7 +1171,7 @@ function ProjectDialog({
         }}
       >
         <div className="modal-header">
-          <h2>给想法一个共同的方向</h2>
+          <h2>{project ? "编辑项目" : "给想法一个共同的方向"}</h2>
           <button
             type="button"
             className="icon-button"
@@ -1138,7 +1181,11 @@ function ProjectDialog({
             <X size={20} />
           </button>
         </div>
-        <p>创建项目，把相关的灵感慢慢聚在一起。</p>
+        <p>
+          {project
+            ? "更新项目目标与进展，AI 会在之后的分析中参考这些信息。"
+            : "创建项目，把相关的灵感慢慢聚在一起。"}
+        </p>
         <label>
           项目名称
           <input
@@ -1174,17 +1221,77 @@ function ProjectDialog({
             </button>
           ))}
         </div>
+        <label>
+          项目状态
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {projectStatuses.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        {project && (
+          <div className="project-delete-area">
+            {deleting ? (
+              <>
+                <p>
+                  确认删除「{project.name}」？项目下的 {project.nodeCount || 0}{" "}
+                  条记录将保留并移回收件箱，父子关系不变。
+                </p>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => setDeleting(false)}
+                  >
+                    保留项目
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      setError("");
+                      try {
+                        const result = await api<{ movedNodes: number }>(
+                          "/api/projects/" + project.id,
+                          { method: "DELETE" },
+                        );
+                        onDeleted(result.movedNodes);
+                      } catch (error) {
+                        setError((error as Error).message);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    {busy ? "删除中…" : "确认删除项目"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="danger-text"
+                onClick={() => setDeleting(true)}
+              >
+                删除项目…
+              </button>
+            )}
+          </div>
+        )}
         {error && <p className="form-error">{error}</p>}
         <div className="modal-actions">
           <button type="button" className="secondary" onClick={onClose}>
             取消
           </button>
           <button
-            disabled={busy || !name.trim()}
+            disabled={busy || !name.trim() || deleting}
             className="primary"
             type="submit"
           >
-            {busy ? "创建中…" : "创建项目"}
+            {busy ? "保存中…" : project ? "保存项目" : "创建项目"}
           </button>
         </div>
       </form>

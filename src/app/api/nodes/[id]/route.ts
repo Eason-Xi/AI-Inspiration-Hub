@@ -1,8 +1,9 @@
 import { after } from "next/server";
-import { db, getNode, patchNode, deleteNode } from "@/lib/db";
+import { db, getNode, patchNode, deleteNode, transaction } from "@/lib/db";
 import { nodePatch } from "@/lib/validation";
 import { fail, jsonBody } from "@/lib/http";
-import { analyzeNode } from "@/lib/ai";
+import { enqueueAnalysis, getTask } from "@/lib/jobs";
+import { wakeWorker } from "@/lib/worker";
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -12,6 +13,7 @@ export async function GET(
   return n
     ? Response.json({
         node: n,
+        task: getTask(id),
         children: db
           .prepare(
             "SELECT payload FROM nodes WHERE parentId=? ORDER BY createdAt",
@@ -37,15 +39,20 @@ export async function PATCH(
       !db.prepare("SELECT id FROM projects WHERE id=?").get(input.projectId)
     )
       throw new Error("项目不存在");
-    const changed =
-      input.content !== undefined && input.content !== current.content;
-    const n = patchNode(id, {
-      ...input,
-      ...(changed
-        ? { analysis: null, aiState: "idle" as const, completedActions: [] }
-        : {}),
+    const changed = (["content", "title", "projectId"] as const).some(
+      (key) => input[key] !== undefined && input[key] !== current[key],
+    );
+    const n = transaction(() => {
+      patchNode(id, {
+        ...input,
+        ...(changed
+          ? { analysis: null, aiState: "idle" as const, completedActions: [] }
+          : {}),
+      });
+      if (changed) enqueueAnalysis(id, getTask(id)?.mode || "默认", true);
+      return getNode(id);
     });
-    if (changed) after(() => analyzeNode(id));
+    if (changed) after(wakeWorker);
     return Response.json(n);
   } catch (e) {
     return fail(e);

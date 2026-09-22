@@ -24,10 +24,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { Idea, Project, Settings, Expansion } from "@/lib/types";
+import type { Idea, Project, Settings, Expansion, AiTask } from "@/lib/types";
 import { statuses } from "@/lib/types";
 import { api, send } from "@/lib/client";
-type Detail = { node: Idea; children: Idea[]; parent: Idea | null };
+type Detail = {
+  node: Idea;
+  children: Idea[];
+  parent: Idea | null;
+  task: AiTask | null;
+};
 export default function NodeDetail({
   id,
   projects,
@@ -50,6 +55,7 @@ export default function NodeDetail({
   const [tags, setTags] = useState("");
   const [mode, setMode] = useState("默认");
   const [busy, setBusy] = useState("");
+  const [savingAction, setSavingAction] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const load = useCallback(async () => {
@@ -96,6 +102,32 @@ export default function NodeDetail({
       setBusy("");
     }
   }
+  async function toggleAction(index: number) {
+    if (!data || savingAction) return;
+    const before = data.node.completedActions;
+    const completedActions = before.includes(index)
+      ? before.filter((value) => value !== index)
+      : [...before, index];
+    setSavingAction(true);
+    setData((current) =>
+      current?.node.id === id
+        ? { ...current, node: { ...current.node, completedActions } }
+        : current,
+    );
+    try {
+      if (!(await patch({ completedActions })))
+        setData((current) =>
+          current?.node.id === id
+            ? {
+                ...current,
+                node: { ...current.node, completedActions: before },
+              }
+            : current,
+        );
+    } finally {
+      setSavingAction(false);
+    }
+  }
   async function child(item: Expansion, key: string) {
     setBusy(key);
     try {
@@ -135,10 +167,15 @@ export default function NodeDetail({
         正在读取记录…
       </div>
     );
-  const { node: n, children, parent } = data;
+  const { node: n, children, parent, task } = data;
   const analysis = n.analysis;
-  const waiting =
-    n.aiState === "pending" && Date.now() - Date.parse(n.updatedAt) < 100000;
+  const waiting = n.aiState === "pending";
+  const taskLabel =
+    task?.status === "queued"
+      ? "已保存，等待分析"
+      : task?.status === "retrying"
+        ? "稍后自动重试"
+        : "正在分析";
   return (
     <div className="detail-page">
       <Link
@@ -431,13 +468,50 @@ export default function NodeDetail({
                   ) : (
                     <Sparkles size={15} />
                   )}
-                  {waiting ? "正在思考…" : analysis ? "重新发散" : "开始发散"}
+                  {waiting ? taskLabel : analysis ? "重新发散" : "开始发散"}
                 </button>
               </div>
+              {waiting && (
+                <div className="task-progress" role="status">
+                  <div>
+                    <strong>{taskLabel}</strong>
+                    <p>
+                      {task?.status === "retrying"
+                        ? `${task.error}。将在 ${new Date(task.nextRunAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} 重试。`
+                        : "可以离开本页，关闭应用后会在下次启动继续处理。"}
+                      {task
+                        ? ` 已尝试 ${task.attempts}/${task.maxAttempts} 次。`
+                        : ""}
+                    </p>
+                  </div>
+                  <button
+                    disabled={!!busy}
+                    onClick={async () => {
+                      setBusy("cancel");
+                      try {
+                        await api("/api/nodes/" + id + "/analyze", {
+                          method: "DELETE",
+                        });
+                        await load();
+                        reload();
+                        notify("任务已取消，本次结果不会再写入");
+                      } catch (error) {
+                        notify((error as Error).message);
+                      } finally {
+                        setBusy("");
+                      }
+                    }}
+                  >
+                    取消任务
+                  </button>
+                </div>
+              )}
               {n.aiError && (
                 <div className="ai-error">
                   {n.aiError}
-                  <button onClick={expand}>重新尝试</button>
+                  <button disabled={waiting || !!busy} onClick={expand}>
+                    重新尝试
+                  </button>
                 </div>
               )}
               {waiting && !analysis && (
@@ -505,14 +579,9 @@ export default function NodeDetail({
                     <label>
                       <input
                         type="checkbox"
+                        disabled={savingAction}
                         checked={n.completedActions.includes(i)}
-                        onChange={() =>
-                          patch({
-                            completedActions: n.completedActions.includes(i)
-                              ? n.completedActions.filter((x) => x !== i)
-                              : [...n.completedActions, i],
-                          })
-                        }
+                        onChange={() => toggleAction(i)}
                       />
                       <span>{action}</span>
                     </label>

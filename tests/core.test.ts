@@ -7,7 +7,11 @@ import { createServer } from "node:http";
 const temp = mkdtempSync(path.join(tmpdir(), "inspiration-test-"));
 process.env.DATA_DIR = temp;
 const store = await import("../src/lib/db");
-const { analyzeNode } = await import("../src/lib/ai");
+const { enqueueAnalysis, runNextJob } = await import("../src/lib/jobs");
+async function analyzeNode(id: string, mode = "默认") {
+  enqueueAnalysis(id, mode, true);
+  await runNextJob();
+}
 const { setSettings, publicSettings } = await import("../src/lib/settings");
 const { nodeInput, analysisSchema } = await import("../src/lib/validation");
 const { isPublicAddress } = await import("../src/lib/links");

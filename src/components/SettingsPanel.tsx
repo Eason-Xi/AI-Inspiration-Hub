@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   Save,
   Sparkles,
+  PlugZap,
 } from "lucide-react";
 import { api, send } from "@/lib/client";
 import type { Settings } from "@/lib/types";
@@ -26,6 +27,32 @@ export default function SettingsPanel({
   const [model, setModel] = useState(settings?.model || "gpt-4.1-mini");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+  const endpointChanged =
+    !!settings?.configured &&
+    baseUrl.replace(/\/+$/, "") !== settings.baseUrl.replace(/\/+$/, "");
+  async function checkConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api<{ model: string; latencyMs: number }>(
+        "/api/settings/test",
+        send("POST", { baseUrl, model, apiKey: key || undefined }),
+      );
+      setTestResult({
+        ok: true,
+        message: `连接成功 · ${result.model} · ${(result.latencyMs / 1000).toFixed(1)} 秒。已验证文字与 JSON 输出；图片理解取决于模型能力。`,
+      });
+    } catch (error) {
+      setTestResult({ ok: false, message: (error as Error).message });
+    } finally {
+      setTesting(false);
+    }
+  }
   return (
     <div className="settings-stack">
       <section className="settings-card">
@@ -75,8 +102,12 @@ export default function SettingsPanel({
             API 地址
             <input
               type="url"
+              aria-label="API 地址"
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+                setTestResult(null);
+              }}
               required
               placeholder="https://api.openai.com/v1"
             />
@@ -87,7 +118,10 @@ export default function SettingsPanel({
               模型名称
               <input
                 value={model}
-                onChange={(e) => setModel(e.target.value)}
+                onChange={(e) => {
+                  setModel(e.target.value);
+                  setTestResult(null);
+                }}
                 required
                 placeholder="gpt-4.1-mini"
               />
@@ -98,13 +132,16 @@ export default function SettingsPanel({
                 type="password"
                 autoComplete="new-password"
                 value={key}
-                onChange={(e) => setKey(e.target.value)}
+                onChange={(e) => {
+                  setKey(e.target.value);
+                  setTestResult(null);
+                }}
                 placeholder={
-                  settings?.configured
+                  settings?.configured && !endpointChanged
                     ? "已保存；留空保持原密钥"
                     : "输入你的 API Key"
                 }
-                required={!settings?.configured}
+                required={!settings?.configured || endpointChanged}
               />
             </label>
           </div>
@@ -114,14 +151,57 @@ export default function SettingsPanel({
               密钥仅保存于本机服务端，不会返回浏览器。启用后，记录内容和图片会发送至你配置的模型服务。
             </p>
           </div>
-          <button type="submit" className="primary" disabled={busy}>
-            {busy ? (
-              <LoaderCircle size={16} className="spin" />
-            ) : (
-              <Save size={16} />
-            )}
-            保存 AI 设置
-          </button>
+          {endpointChanged && (
+            <p className="settings-help">
+              更换服务地址后，请填写新服务对应的密钥。
+            </p>
+          )}
+          {testResult && (
+            <div
+              role="status"
+              className={
+                "connection-result " + (testResult.ok ? "success" : "failure")
+              }
+            >
+              {testResult.message}
+            </div>
+          )}
+          <div className="button-row">
+            <button
+              type="button"
+              className="secondary"
+              onClick={checkConnection}
+              disabled={
+                busy ||
+                testing ||
+                !baseUrl ||
+                !model ||
+                ((!settings?.configured || endpointChanged) && !key)
+              }
+            >
+              {testing ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <PlugZap size={16} />
+              )}
+              {testing ? "正在测试…" : "测试连接"}
+            </button>
+            <button
+              type="submit"
+              className="primary"
+              disabled={busy || testing}
+            >
+              {busy ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <Save size={16} />
+              )}
+              保存 AI 设置
+            </button>
+          </div>
+          <p className="settings-help">
+            测试会向当前填写的模型发送一条简短请求，可能产生少量用量；测试通过后点击保存。
+          </p>
         </form>
       </section>
       <section className="settings-card">

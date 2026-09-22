@@ -10,11 +10,30 @@ const globalDb = globalThis as unknown as { hubDb?: DatabaseSync };
 export const db =
   globalDb.hubDb ?? new DatabaseSync(path.join(dataDir, "hub.sqlite"));
 globalDb.hubDb = db;
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, color TEXT NOT NULL, status TEXT NOT NULL, createdAt TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, type TEXT NOT NULL, projectId TEXT REFERENCES projects(id) ON DELETE SET NULL, parentId TEXT REFERENCES nodes(id) ON DELETE SET NULL, status TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS nodes_project ON nodes(projectId); CREATE INDEX IF NOT EXISTS nodes_status ON nodes(status); CREATE INDEX IF NOT EXISTS nodes_created ON nodes(createdAt DESC); CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parentId);
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ai_jobs (
+ id TEXT PRIMARY KEY, nodeId TEXT NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+ mode TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+ maxAttempts INTEGER NOT NULL DEFAULT 3, nextRunAt INTEGER NOT NULL,
+ leaseUntil INTEGER, leaseToken TEXT, error TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_jobs_due ON ai_jobs(status,nextRunAt);`);
+export function transaction<T>(work: () => T): T {
+  const name = "hub_" + crypto.randomUUID().replaceAll("-", "");
+  db.exec(`SAVEPOINT ${name}`);
+  try {
+    const result = work();
+    db.exec(`RELEASE ${name}`);
+    return result;
+  } catch (error) {
+    db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`);
+    throw error;
+  }
+}
 export function getNode(id: string): Idea | null {
   const row = db.prepare("SELECT payload FROM nodes WHERE id=?").get(id) as
     { payload: string } | undefined;
@@ -78,7 +97,9 @@ export function newNode(input: Partial<Idea> & { content: string }): Idea {
 }
 export function projects() {
   return db
-    .prepare("SELECT * FROM projects ORDER BY createdAt DESC")
+    .prepare(
+      "SELECT projects.*, (SELECT COUNT(*) FROM nodes WHERE projectId=projects.id) AS nodeCount FROM projects ORDER BY createdAt DESC",
+    )
     .all() as unknown as Project[];
 }
 export function createProject(
@@ -103,6 +124,34 @@ export function createProject(
     p.createdAt,
   );
   return p;
+}
+export function getProject(id: string): Project | null {
+  return (
+    (db
+      .prepare(
+        "SELECT projects.*, (SELECT COUNT(*) FROM nodes WHERE projectId=projects.id) AS nodeCount FROM projects WHERE id=?",
+      )
+      .get(id) as Project | undefined) || null
+  );
+}
+export function updateProject(
+  id: string,
+  input: Pick<Project, "name" | "description" | "color" | "status">,
+) {
+  db.prepare(
+    "UPDATE projects SET name=?,description=?,color=?,status=? WHERE id=?",
+  ).run(input.name, input.description, input.color, input.status, id);
+  return getProject(id);
+}
+export function deleteProject(id: string) {
+  return transaction(() => {
+    const nodes = db
+      .prepare("SELECT id FROM nodes WHERE projectId=?")
+      .all(id) as { id: string }[];
+    for (const node of nodes) patchNode(node.id, { projectId: null });
+    db.prepare("DELETE FROM projects WHERE id=?").run(id);
+    return nodes.length;
+  });
 }
 export function deleteNode(id: string) {
   const children = db

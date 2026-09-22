@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-test/
 data/
 .env*
 !.env.example
