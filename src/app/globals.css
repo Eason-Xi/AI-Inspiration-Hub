@@ -950,6 +950,22 @@ h1 {
   border-radius: 7px;
   margin-top: 12px;
   color: #a49daf;
+  min-height: 48px;
+}
+.link-preview-image,
+.detail-link-image {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 64px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #eeebf3;
+}
+.link-preview-image img,
+.detail-link-image img {
+  object-fit: cover;
 }
 .link-globe {
   display: flex;
@@ -961,19 +977,29 @@ h1 {
   width: 29px;
   height: 29px;
 }
-.link-preview > span:nth-child(2) {
+.link-preview-copy {
   flex: 1;
   min-width: 0;
   font-size: 10px;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   color: #8a829b;
+}
+.link-preview-copy strong,
+.link-preview-copy > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.link-preview-copy > span {
+  margin-top: 2px;
+  color: #a39aaf;
 }
 .link-preview small {
   display: block;
   font-size: 9px;
   color: #b2aabc;
+  margin-top: 3px;
 }
 .ai-snippet {
   display: flex;
@@ -1563,7 +1589,11 @@ label > textarea {
   margin: 19px 0;
   color: #b3a2c7;
 }
-.detail-link div {
+.detail-link-image {
+  width: 96px;
+  height: 72px;
+}
+.detail-link-copy {
   flex: 1;
   min-width: 0;
 }
@@ -1572,12 +1602,17 @@ label > textarea {
   display: block;
   color: #877595;
 }
-.detail-link span {
+.detail-link-copy > span {
   display: block;
   font-size: 11px;
   color: #b6a7c2;
   overflow-wrap: anywhere;
   margin-top: 4px;
+}
+.detail-link-copy small {
+  display: block;
+  color: #b6a7c2;
+  margin-top: 6px;
 }
 .detail-tags {
   display: flex;
@@ -2120,7 +2155,7 @@ label > textarea {
   font-size: 13px;
 }
 .detail-date,
-.detail-link span,
+.detail-link-copy > span,
 .node-properties label {
   font-size: 12px;
 }

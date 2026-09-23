@@ -14,7 +14,8 @@ async function analyzeNode(id: string, mode = "默认") {
 }
 const { setSettings, publicSettings } = await import("../src/lib/settings");
 const { nodeInput, analysisSchema } = await import("../src/lib/validation");
-const { isPublicAddress } = await import("../src/lib/links");
+const { isPublicAddress, parseLinkMetadata, linkMetadata, linkImage } =
+  await import("../src/lib/links");
 after(() => {
   store.db.close();
   rmSync(temp, { recursive: true, force: true });
@@ -66,6 +67,9 @@ test("拒绝空记录、危险链接、不完整 AI 输出与内网解析", () =
     "172.16.0.1",
     "::1",
     "100.64.0.1",
+    "192.0.2.1",
+    "198.51.100.1",
+    "203.0.113.1",
   ])
     assert.equal(isPublicAddress(address), false, address);
   assert.equal(isPublicAddress("8.8.8.8"), true);
@@ -140,4 +144,28 @@ test("仅链接记录使用域名标题，空标题不覆盖默认值", () => {
     type: "link",
   });
   assert.equal(node.title, "example.com");
+});
+
+test("链接预览提取标题、描述和相对 OG 图片，代理拒绝内网地址", async () => {
+  const preview = parseLinkMetadata(
+    `<title>普通标题</title>
+     <meta content="说明 &amp; 更多" name="description">
+     <meta content="分享标题" property="og:title">
+     <meta property="og:image" content="/cover.png?x=1&amp;y=2">`,
+    "https://example.com/article",
+  );
+  assert.deepEqual(preview, {
+    linkTitle: "分享标题",
+    linkDescription: "说明 & 更多",
+    linkImage: "https://example.com/cover.png?x=1&y=2",
+  });
+  assert.equal(
+    parseLinkMetadata(
+      '<meta property="og:image" content="http://127.0.0.1/private">',
+      "https://example.com/page",
+    ).linkImage,
+    null,
+  );
+  await assert.rejects(linkMetadata("http://127.0.0.1/private"), /公开网页/);
+  await assert.rejects(linkImage("http://127.0.0.1/private"), /公开网页/);
 });

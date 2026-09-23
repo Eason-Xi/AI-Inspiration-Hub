@@ -57,6 +57,7 @@ export default function NodeDetail({
   const [busy, setBusy] = useState("");
   const [savingAction, setSavingAction] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [previewImageFailed, setPreviewImageFailed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const load = useCallback(async () => {
     try {
@@ -69,6 +70,7 @@ export default function NodeDetail({
   useEffect(() => {
     setData(null);
     setEditing(false);
+    setPreviewImageFailed(false);
     load();
   }, [load]);
   useEffect(() => {
@@ -329,10 +331,26 @@ export default function NodeDetail({
                 rel="noreferrer"
                 className="detail-link"
               >
-                <ExternalLink size={19} />
-                <div>
+                {n.linkImage && !previewImageFailed ? (
+                  <span className="detail-link-image">
+                    <Image
+                      src={`/api/nodes/${n.id}/preview-image`}
+                      alt=""
+                      fill
+                      sizes="96px"
+                      unoptimized
+                      onError={() => setPreviewImageFailed(true)}
+                    />
+                  </span>
+                ) : (
+                  <ExternalLink size={19} />
+                )}
+                <div className="detail-link-copy">
                   <strong>{n.linkTitle || new URL(n.url).hostname}</strong>
                   <span>{n.linkDescription || n.url}</span>
+                  {n.linkDescription && (
+                    <small>{new URL(n.url).hostname}</small>
+                  )}
                 </div>
                 <ArrowRight size={17} />
               </a>

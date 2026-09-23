@@ -27,6 +27,7 @@ const ideaSchema = z.object({
   url: urlSchema.nullable(),
   linkTitle: z.string().max(10000).nullable(),
   linkDescription: z.string().max(50000).nullable(),
+  linkImage: urlSchema.nullable().default(null),
   projectId: z.uuid().nullable(),
   parentId: z.uuid().nullable(),
   status: z.enum(statuses),

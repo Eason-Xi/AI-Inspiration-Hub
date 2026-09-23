@@ -23,6 +23,7 @@ export type Idea = {
   url: string | null;
   linkTitle: string | null;
   linkDescription: string | null;
+  linkImage: string | null;
   projectId: string | null;
   parentId: string | null;
   status: Status;

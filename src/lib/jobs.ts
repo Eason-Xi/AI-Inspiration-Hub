@@ -147,7 +147,15 @@ export async function runNextJob(): Promise<boolean> {
       try {
         const metadata = await linkMetadata(node.url);
         if (!ownsLease(job)) return true;
-        if (getNode(node.id)?.url === node.url) patchNode(node.id, metadata);
+        if (getNode(node.id)?.url === node.url)
+          patchNode(node.id, {
+            ...metadata,
+            ...(node.type === "link" &&
+            (node.title === new URL(node.url).hostname ||
+              node.title === node.url.slice(0, 72))
+              ? { title: metadata.linkTitle.slice(0, 160) }
+              : {}),
+          });
       } catch {
         /* A protected or offline link should not block idea analysis. */
       }

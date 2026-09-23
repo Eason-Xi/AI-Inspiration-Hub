@@ -76,6 +76,7 @@ export function newNode(input: Partial<Idea> & { content: string }): Idea {
     url: null,
     linkTitle: null,
     linkDescription: null,
+    linkImage: null,
     projectId: null,
     parentId: null,
     status: "未处理",

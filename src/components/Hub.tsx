@@ -818,6 +818,7 @@ function NoteCard({
   project?: Project;
   onFavorite: () => void;
 }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const Icon =
     n.type === "image" ? ImageIcon : n.type === "link" ? LinkIcon : FileText;
   return (
@@ -859,7 +860,11 @@ function NoteCard({
         <Link href={"/node/" + n.id} className="note-main">
           <h3>{n.title}</h3>
           <p>
-            {n.content || n.analysis?.summary || "一张图片，一个新的思考起点。"}
+            {n.content ||
+              n.analysis?.summary ||
+              (n.url
+                ? n.linkDescription || n.url
+                : "一张图片，一个新的思考起点。")}
           </p>
         </Link>
         {n.url && (
@@ -869,11 +874,25 @@ function NoteCard({
             target="_blank"
             rel="noreferrer"
           >
-            <span className="link-globe">
-              <LinkIcon size={15} />
-            </span>
-            <span>
-              {n.linkTitle || new URL(n.url).hostname}
+            {n.linkImage && !imageFailed ? (
+              <span className="link-preview-image">
+                <Image
+                  src={`/api/nodes/${n.id}/preview-image`}
+                  alt=""
+                  fill
+                  sizes="64px"
+                  unoptimized
+                  onError={() => setImageFailed(true)}
+                />
+              </span>
+            ) : (
+              <span className="link-globe">
+                <LinkIcon size={15} />
+              </span>
+            )}
+            <span className="link-preview-copy">
+              <strong>{n.linkTitle || new URL(n.url).hostname}</strong>
+              {n.linkDescription && <span>{n.linkDescription}</span>}
               <small>{new URL(n.url).hostname}</small>
             </span>
             <ArrowRight size={14} />
@@ -889,7 +908,7 @@ function NoteCard({
         {n.aiState === "pending" && (
           <div className="ai-snippet">
             <LoaderCircle size={14} className="spin" />
-            AI 正在整理这个想法…
+            {n.url && !n.linkTitle ? "正在解析链接…" : "AI 正在整理这个想法…"}
           </div>
         )}
         <div className="note-tags">

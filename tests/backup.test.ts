@@ -33,6 +33,7 @@ function fixture() {
   const parent = store.newNode({ content: "备份父记录" });
   store.deleteNode(parent.id);
   parent.projectId = project.id;
+  parent.linkImage = "https://example.com/cover.png";
   const child = {
     ...parent,
     id: crypto.randomUUID(),
@@ -67,6 +68,7 @@ test("完整备份往返保留图片、项目、父子关系，预览不写入�
   assert.equal(child.parentId, source.nodes[1].id);
   assert.equal(child.projectId, source.projects[0].id);
   assert.equal(child.aiState, "idle");
+  assert.equal(child.linkImage, "https://example.com/cover.png");
   assert.equal(
     store.db.prepare("SELECT count(*) AS n FROM ai_jobs").get()!.n,
     0,
@@ -105,6 +107,13 @@ test("拒绝过期预览，确认前必须重新检查冲突", () => {
   assert.equal(store.getProject(source.projects[0].id), null);
   assert.equal(store.getNode(source.nodes[0].id), null);
   assert.throws(() => backup.restoreBackup(bytes, ""), /重新预览/);
+});
+test("旧版备份缺少链接封面字段时仍可预览", () => {
+  const source = fixture();
+  for (const node of source.nodes)
+    delete (node as Partial<typeof node>).linkImage;
+  const parsed = backup.parseBackup(encode(source));
+  assert.equal(parsed.nodes[0].linkImage, null);
 });
 test("损坏、路径穿越、缺图、重复 ID 和循环关联均在写入前拒绝", () => {
   for (const mutate of [
