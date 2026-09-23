@@ -2,8 +2,6 @@
 import { useState } from "react";
 import {
   CheckCircle2,
-  Database,
-  Download,
   KeyRound,
   LoaderCircle,
   Save,
@@ -12,6 +10,7 @@ import {
 } from "lucide-react";
 import { api, send } from "@/lib/client";
 import type { Settings } from "@/lib/types";
+import BackupPanel from "./BackupPanel";
 export default function SettingsPanel({
   settings,
   notify,
@@ -204,26 +203,7 @@ export default function SettingsPanel({
           </p>
         </form>
       </section>
-      <section className="settings-card">
-        <div className="settings-card-heading">
-          <span className="icon-tile teal">
-            <Database size={21} />
-          </span>
-          <div>
-            <h2>你的数据，留在你这里</h2>
-            <p>记录、项目与图片保存在本机 data 目录。</p>
-          </div>
-        </div>
-        <p className="settings-description">
-          当前版本适合个人本地使用。备份整个 data
-          文件夹，可以保留数据库、图片与模型设置。导出的 JSON 包含文字、项目和
-          AI 结果，不包含图片文件与 API Key。
-        </p>
-        <a className="secondary" href="/api/export" download>
-          <Download size={16} />
-          导出全部记录（JSON）
-        </a>
-      </section>
+      <BackupPanel notify={notify} reload={reload} />
       <section className="scope-note">
         <h3>关于这个 MVP</h3>
         <p>

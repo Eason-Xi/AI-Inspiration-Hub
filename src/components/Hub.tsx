@@ -40,6 +40,7 @@ import { statuses, projectStatuses } from "@/lib/types";
 import { api, send } from "@/lib/client";
 import NodeDetail from "./NodeDetail";
 import SettingsPanel from "./SettingsPanel";
+import { useDraft } from "@/lib/use-draft";
 
 export default function Hub() {
   const pathname = usePathname();
@@ -454,6 +455,7 @@ export default function Hub() {
                   <section className="feed">
                     {["home", "inbox", "project"].includes(view) && (
                       <Composer
+                        key={projectId || "inbox"}
                         refProp={composerRef}
                         projectId={projectId}
                         onSaved={() => {
@@ -936,15 +938,22 @@ function Composer({
   notify: (s: string) => void;
   configured: boolean;
 }) {
-  const [text, setText] = useState("");
-  const [image, setImage] = useState<string | null>(null);
-  const [url, setUrl] = useState("");
-  const [showUrl, setShowUrl] = useState(false);
+  const {
+    draft: { text, image, url, showUrl },
+    update,
+    clear,
+    ready,
+    warning,
+  } = useDraft(projectId);
+  const setText = (text: string) => update({ text });
+  const setImage = (image: string | null) => update({ image });
+  const setUrl = (url: string) => update({ url });
+  const setShowUrl = (showUrl: boolean) => update({ showUrl });
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   async function upload(file?: File) {
-    if (!file) return;
+    if (!file || !ready || busy || uploading) return;
     setUploading(true);
     try {
       const form = new FormData();
@@ -962,7 +971,8 @@ function Composer({
     }
   }
   async function save() {
-    if (busy || uploading || (!text.trim() && !image && !url.trim())) return;
+    if (!ready || busy || uploading || (!text.trim() && !image && !url.trim()))
+      return;
     setBusy(true);
     try {
       const pasted = /^https?:\/\/\S+$/.test(text.trim()) ? text.trim() : null;
@@ -976,10 +986,7 @@ function Composer({
           projectId: projectId || null,
         }),
       );
-      setText("");
-      setUrl("");
-      setImage(null);
-      setShowUrl(false);
+      clear();
       onSaved();
     } catch (e) {
       notify((e as Error).message);
@@ -998,6 +1005,8 @@ function Composer({
       <textarea
         ref={refProp}
         aria-label="记录一个想法"
+        disabled={!ready || busy}
+        maxLength={50000}
         placeholder="一个突然的灵感、一个还没想清楚的问题，或一段值得留下的话…"
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -1030,6 +1039,7 @@ function Composer({
           <button
             className="icon-button"
             aria-label="移除图片"
+            disabled={busy}
             onClick={() => setImage(null)}
           >
             <X size={15} />
@@ -1042,6 +1052,8 @@ function Composer({
           <input
             autoFocus
             aria-label="链接地址"
+            disabled={!ready || busy}
+            maxLength={2048}
             placeholder="https://…"
             type="url"
             value={url}
@@ -1050,6 +1062,7 @@ function Composer({
           <button
             className="icon-button"
             aria-label="移除链接"
+            disabled={busy}
             onClick={() => {
               setUrl("");
               setShowUrl(false);
@@ -1065,7 +1078,10 @@ function Composer({
             <FileText size={16} />
             <span>文字</span>
           </button>
-          <button disabled={uploading} onClick={() => fileRef.current?.click()}>
+          <button
+            disabled={!ready || busy || uploading}
+            onClick={() => fileRef.current?.click()}
+          >
             {uploading ? (
               <LoaderCircle size={16} className="spin" />
             ) : (
@@ -1075,7 +1091,8 @@ function Composer({
           </button>
           <button
             className={showUrl ? "active" : ""}
-            onClick={() => setShowUrl((x) => !x)}
+            disabled={!ready || busy}
+            onClick={() => setShowUrl(!showUrl)}
           >
             <LinkIcon size={16} />
             <span>链接</span>
@@ -1094,7 +1111,10 @@ function Composer({
           <button
             className="primary"
             disabled={
-              busy || uploading || (!text.trim() && !image && !url.trim())
+              !ready ||
+              busy ||
+              uploading ||
+              (!text.trim() && !image && !url.trim())
             }
             onClick={save}
           >
@@ -1107,6 +1127,14 @@ function Composer({
           </button>
         </div>
       </div>
+      {(warning || text || image || url) && (
+        <p
+          className={"draft-status " + (warning ? "draft-warning" : "")}
+          role="status"
+        >
+          {warning || "草稿已保存到此浏览器 · 当前收件箱或项目独立保存"}
+        </p>
+      )}
       <div className="composer-note">
         <Sparkles size={13} />
         {configured

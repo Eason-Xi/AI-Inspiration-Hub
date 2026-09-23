@@ -2568,3 +2568,40 @@ label > textarea {
 .empty-state p {
   color: #95849f;
 }
+.draft-status {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #6c6a7b;
+}
+.draft-warning {
+  color: #a83d43;
+}
+.backup-import {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #ede8f2;
+}
+.backup-import input[type="file"] {
+  width: 100%;
+  max-width: 100%;
+  font-size: 13px;
+}
+.backup-preview {
+  margin-top: 16px;
+  padding: 20px;
+  border: 1px solid #e0d7ee;
+  border-radius: 14px;
+  background: #faf8fd;
+  overflow-wrap: anywhere;
+}
+.backup-preview h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+.backup-preview p {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.settings-card .button-row {
+  flex-wrap: wrap;
+}
