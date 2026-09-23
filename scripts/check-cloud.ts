@@ -30,7 +30,21 @@ const png = Buffer.from(
 let project: string | undefined;
 const ids: string[] = [];
 const images = [image];
+let wasInitialized = true;
 try {
+  wasInitialized = !!(await db
+    .prepare("SELECT value FROM meta WHERE key='initialized'")
+    .get());
+  const active = await db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM ai_jobs WHERE status IN ('queued','running','retrying')",
+    )
+    .get();
+  assert.equal(
+    Number(active.n),
+    0,
+    "Run cloud checks in an idle test workspace without active AI tasks",
+  );
   console.log("Checking cloud database and private storage...");
   project = (
     await createProject(
@@ -122,5 +136,11 @@ try {
   for (const id of ids.reverse()) await deleteNode(id);
   if (project) await deleteProject(project);
   for (const name of images) await removeImage(name).catch(() => {});
+  if (!wasInitialized)
+    await db
+      .prepare(
+        "DELETE FROM meta WHERE key='initialized' AND NOT EXISTS(SELECT 1 FROM nodes) AND NOT EXISTS(SELECT 1 FROM projects)",
+      )
+      .run();
   await db.close();
 }
