@@ -9,35 +9,39 @@ process.env.DATA_DIR = temp;
 const store = await import("../src/lib/db");
 const { enqueueAnalysis, runNextJob } = await import("../src/lib/jobs");
 async function analyzeNode(id: string, mode = "默认") {
-  enqueueAnalysis(id, mode, true);
+  await enqueueAnalysis(id, mode, true);
   await runNextJob();
 }
 const { setSettings, publicSettings } = await import("../src/lib/settings");
 const { nodeInput, analysisSchema } = await import("../src/lib/validation");
 const { isPublicAddress, parseLinkMetadata, linkMetadata, linkImage } =
   await import("../src/lib/links");
-after(() => {
-  store.db.close();
+after(async () => {
+  await store.db.close();
   rmSync(temp, { recursive: true, force: true });
 });
-test("记录持久化，项目归属及删除父节点保留子节点", () => {
-  const project = store.createProject("验收项目", "持久化测试", "#8b5cf6");
-  const parent = store.newNode({
+test("记录持久化，项目归属及删除父节点保留子节点", async () => {
+  const project = await store.createProject(
+    "验收项目",
+    "持久化测试",
+    "#8b5cf6",
+  );
+  const parent = await store.newNode({
     content: "核心想法",
     projectId: project.id,
     tags: ["测试"],
   });
-  const child = store.newNode({
+  const child = await store.newNode({
     content: "具体行动",
     parentId: parent.id,
     projectId: project.id,
   });
-  store.patchNode(parent.id, { favorite: true, status: "探索中" });
-  assert.equal(store.getNode(parent.id)?.favorite, true);
-  assert.equal(store.getNode(child.id)?.parentId, parent.id);
-  store.deleteNode(parent.id);
-  assert.equal(store.getNode(child.id)?.parentId, null);
-  assert.equal(store.getNode(child.id)?.projectId, project.id);
+  await store.patchNode(parent.id, { favorite: true, status: "探索中" });
+  assert.equal((await store.getNode(parent.id))?.favorite, true);
+  assert.equal((await store.getNode(child.id))?.parentId, parent.id);
+  await store.deleteNode(parent.id);
+  assert.equal((await store.getNode(child.id))?.parentId, null);
+  assert.equal((await store.getNode(child.id))?.projectId, project.id);
 });
 test("拒绝空记录、危险链接、不完整 AI 输出与内网解析", () => {
   assert.equal(nodeInput.safeParse({ content: "  " }).success, false);
@@ -107,37 +111,42 @@ test("AI 服务完整链路：摘要、发散、子节点、行动与失败状�
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address() as { port: number };
-    setSettings({
+    await setSettings({
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
       model: "test-model",
       apiKey: "test-only-key",
     });
-    const node = store.newNode({ content: "想做一个访谈准备工具" });
+    const node = await store.newNode({ content: "想做一个访谈准备工具" });
     await analyzeNode(node.id, "产品");
-    const result = store.getNode(node.id)!;
+    const result = (await store.getNode(node.id))!;
     assert.equal(result.aiState, "done");
     assert.equal(result.analysis?.expansions.length, 3);
     assert.ok(received.messages[1].content[0].text.includes("产品"));
-    assert.ok(!JSON.stringify(publicSettings()).includes("test-only-key"));
-    const child = store.newNode({
+    assert.ok(
+      !JSON.stringify(await publicSettings()).includes("test-only-key"),
+    );
+    const child = await store.newNode({
       ...result.analysis!.expansions[0],
       parentId: node.id,
     });
-    assert.equal(store.getNode(child.id)?.parentId, node.id);
-    store.patchNode(node.id, { completedActions: [0] });
-    assert.deepEqual(store.getNode(node.id)?.completedActions, [0]);
+    assert.equal((await store.getNode(child.id))?.parentId, node.id);
+    await store.patchNode(node.id, { completedActions: [0] });
+    assert.deepEqual((await store.getNode(node.id))?.completedActions, [0]);
     fail = true;
     await analyzeNode(node.id);
-    assert.equal(store.getNode(node.id)?.aiState, "error");
-    assert.match(store.getNode(node.id)!.aiError!, /API Key/);
-    assert.equal(store.getNode(node.id)?.analysis?.expansions.length, 3);
+    assert.equal((await store.getNode(node.id))?.aiState, "error");
+    assert.match((await store.getNode(node.id))!.aiError!, /API Key/);
+    assert.equal(
+      (await store.getNode(node.id))?.analysis?.expansions.length,
+      3,
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 
-test("仅链接记录使用域名标题，空标题不覆盖默认值", () => {
-  const node = store.newNode({
+test("仅链接记录使用域名标题，空标题不覆盖默认值", async () => {
+  const node = await store.newNode({
     title: "",
     content: "",
     url: "https://example.com",

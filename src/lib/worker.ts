@@ -1,32 +1,57 @@
 import { recoverLegacyTasks, runNextJob } from "./jobs";
-type WorkerState = { timer?: ReturnType<typeof setInterval>; busy: boolean };
-const globalWorker = globalThis as unknown as { hubWorker?: WorkerState };
-const state =
-  globalWorker.hubWorker ?? (globalWorker.hubWorker = { busy: false });
-async function tick() {
-  if (state.busy) return;
-  state.busy = true;
+import { db } from "./db";
+type WorkerState = {
+  timer?: ReturnType<typeof setInterval>;
+  running?: Promise<void>;
+};
+const globalWorker = globalThis as unknown as { hubWorkerV2?: WorkerState };
+const state = (globalWorker.hubWorkerV2 ??= {});
+async function drain() {
+  const deadline = Date.now() + 180_000;
   try {
-    for (let i = 0; i < 10; i++) {
-      if (!(await runNextJob())) break;
+    await recoverLegacyTasks();
+    while (Date.now() < deadline) {
+      if (await runNextJob()) continue;
+      if (!process.env.VERCEL) break;
+      const next = await db
+        .prepare(
+          "SELECT MIN(nextRunAt) AS due FROM ai_jobs WHERE status IN ('queued','retrying')",
+        )
+        .get();
+      const delay = Number(next?.due) - Date.now();
+      if (
+        next?.due == null ||
+        delay > 21_000 ||
+        Date.now() + Math.max(0, delay) >= deadline
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, Math.max(250, delay)));
     }
   } catch {
     console.error(
-      "[AI queue] Worker tick failed; pending jobs remain in the database.",
+      "[AI queue] Worker failed; persisted jobs resume on the next request or scheduled invocation.",
     );
-  } finally {
-    state.busy = false;
   }
 }
 export function startWorker() {
-  if (process.env.AI_WORKER_DISABLED === "1" || state.timer) return;
-  recoverLegacyTasks();
+  if (
+    process.env.VERCEL ||
+    process.env.AI_WORKER_DISABLED === "1" ||
+    state.timer
+  )
+    return;
   state.timer = setInterval(() => {
-    void tick();
+    void wakeWorker();
   }, 2000);
   state.timer.unref();
 }
-export function wakeWorker() {
+export async function wakeWorker() {
+  if (process.env.AI_WORKER_DISABLED === "1") return;
   startWorker();
-  if (process.env.AI_WORKER_DISABLED !== "1") void tick();
+  // Return the work promise so Next after()/Vercel waitUntil keeps it alive.
+  if (!state.running)
+    state.running = drain().finally(() => {
+      state.running = undefined;
+    });
+  await state.running;
 }

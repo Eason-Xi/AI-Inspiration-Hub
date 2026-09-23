@@ -74,6 +74,9 @@ const child = spawn(
     env: {
       ...process.env,
       NEXT_TEST_BUILD: "1",
+      STORAGE_BACKEND: "local",
+      APP_PASSWORD: "",
+      VERCEL: "",
       DATA_DIR: dataDir,
       AI_API_KEY: "",
       AI_BASE_URL: "http://127.0.0.1:3104/v1",

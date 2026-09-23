@@ -1,19 +1,19 @@
-import { readFileSync } from "node:fs";
+import { readImage } from "./storage";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { credentials, type Credentials } from "./settings";
-import { dataDir, getProject } from "./db";
+import { getProject } from "./db";
 import { analysisSchema } from "./validation";
 import { chatJson, ProviderError } from "./provider";
 import type { Idea } from "./types";
 
-function projectContext(node: Idea) {
-  const p = node.projectId ? getProject(node.projectId) : null;
+async function projectContext(node: Idea) {
+  const p = node.projectId ? await getProject(node.projectId) : null;
   return p
     ? { name: p.name, description: p.description, status: p.status }
     : null;
 }
-export function analysisFingerprint(node: Idea) {
+export async function analysisFingerprint(node: Idea) {
   return createHash("sha256")
     .update(
       JSON.stringify({
@@ -22,7 +22,7 @@ export function analysisFingerprint(node: Idea) {
         image: node.image,
         url: node.url,
         projectId: node.projectId,
-        project: projectContext(node),
+        project: await projectContext(node),
       }),
     )
     .digest("hex");
@@ -30,8 +30,9 @@ export function analysisFingerprint(node: Idea) {
 export async function generateAnalysis(
   node: Idea,
   mode = "默认",
-  config: Credentials = credentials(),
+  config?: Credentials,
 ) {
+  config ??= await credentials();
   const content: unknown[] = [
     {
       type: "text",
@@ -41,7 +42,7 @@ export async function generateAnalysis(
         url: node.url,
         pageTitle: node.linkTitle,
         pageDescription: node.linkDescription,
-        project: projectContext(node),
+        project: await projectContext(node),
         mode,
       }),
     },
@@ -49,9 +50,9 @@ export async function generateAnalysis(
   if (node.image) {
     try {
       const ext = path.extname(node.image).slice(1);
-      const image = readFileSync(
-        path.join(dataDir, "uploads", path.basename(node.image)),
-      ).toString("base64");
+      const image = (await readImage(path.basename(node.image))).toString(
+        "base64",
+      );
       content.push({
         type: "image_url",
         image_url: {
@@ -59,7 +60,7 @@ export async function generateAnalysis(
         },
       });
     } catch {
-      throw new ProviderError("图片文件不存在或无法读取，请检查本机图片文件");
+      throw new ProviderError("图片文件不存在或无法读取，请检查图片存储");
     }
   }
   const result = await chatJson(config, [

@@ -63,7 +63,12 @@ export type AiTask = {
   nextRunAt: number;
   error: string | null;
 };
-export type Settings = { baseUrl: string; model: string; configured: boolean };
+export type Settings = {
+  baseUrl: string;
+  model: string;
+  configured: boolean;
+  storage?: "local" | "supabase";
+};
 export type Workspace = {
   nodes: Idea[];
   projects: Project[];

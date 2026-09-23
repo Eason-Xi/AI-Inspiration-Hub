@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Database, Download, LoaderCircle, Upload } from "lucide-react";
 import { api } from "@/lib/client";
 import type { BackupPreview } from "@/lib/backup";
+import { stageFile } from "@/lib/transfers";
 
 export default function BackupPanel({
   notify,
@@ -12,6 +13,7 @@ export default function BackupPanel({
   reload: () => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
+  const [staged, setStaged] = useState<string | null>(null);
   const [preview, setPreview] = useState<BackupPreview | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -36,6 +38,7 @@ export default function BackupPanel({
     }
   }
   async function inspect(selected: File) {
+    setStaged(null);
     setFile(selected);
     setPreview(null);
     setError("");
@@ -45,10 +48,12 @@ export default function BackupPanel({
     }
     setBusy("preview");
     try {
+      const key = await stageFile(selected, "backup");
+      setStaged(key);
       setPreview(
         await api<BackupPreview>("/api/backup", {
           method: "POST",
-          body: selected,
+          body: key ? JSON.stringify({ key }) : selected,
           headers: { "Content-Type": "application/json" },
         }),
       );
@@ -65,7 +70,7 @@ export default function BackupPanel({
     try {
       const result = await api<BackupPreview>("/api/backup", {
         method: "POST",
-        body: file,
+        body: staged ? JSON.stringify({ key: staged }) : file,
         headers: {
           "Content-Type": "application/json",
           "X-Backup-Preview": preview.token,
@@ -73,6 +78,7 @@ export default function BackupPanel({
       });
       setPreview(null);
       setFile(null);
+      setStaged(null);
       reload();
       notify(
         `恢复完成：新增 ${result.newNodes} 条记录、${result.newProjects} 个项目，跳过 ${result.skippedNodes} 条已有记录`,
@@ -130,7 +136,7 @@ export default function BackupPanel({
         </label>
         <p className="settings-help">
           先预览，再确认导入。支持本应用版本 2 完整备份，最大 32 MB、5,000
-          条记录，图片总量 20 MB；更大的资料库请备份整个 data 文件夹。
+          条记录，图片总量 20 MB；更大的资料库请使用数据库和存储服务备份。
         </p>
         {busy === "preview" && <p role="status">正在检查备份…</p>}
         {error && (

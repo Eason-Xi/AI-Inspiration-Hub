@@ -1,0 +1,7 @@
+data/
+.env*
+.next-test/
+test-results/
+playwright-report/
+tests/
+*.tsbuildinfo

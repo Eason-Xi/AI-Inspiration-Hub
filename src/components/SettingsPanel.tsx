@@ -147,7 +147,10 @@ export default function SettingsPanel({
           <div className="security-note">
             <KeyRound size={16} />
             <p>
-              密钥仅保存于本机服务端，不会返回浏览器。启用后，记录内容和图片会发送至你配置的模型服务。
+              {settings?.storage === "supabase"
+                ? "密钥加密保存在云端数据库中"
+                : "密钥仅保存在本机服务端"}
+              ，不会返回浏览器。启用后，记录内容和图片会发送至你配置的模型服务。
             </p>
           </div>
           {endpointChanged && (

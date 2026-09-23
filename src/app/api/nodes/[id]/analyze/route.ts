@@ -1,3 +1,5 @@
+import { authorize } from "@/lib/access";
+export const maxDuration = 300;
 import { after } from "next/server";
 import { z } from "zod";
 import { getNode } from "@/lib/db";
@@ -10,11 +12,14 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = authorize(req);
+  if (denied) return denied;
+
   try {
     const { id } = await params;
-    const n = getNode(id);
+    const n = await getNode(id);
     if (!n) return Response.json({ error: "记录不存在" }, { status: 404 });
-    if (!publicSettings().configured)
+    if (!(await publicSettings()).configured)
       return Response.json(
         { error: "请先在设置中连接 AI 模型" },
         { status: 409 },
@@ -24,7 +29,7 @@ export async function POST(
         mode: z.enum(modes).default("默认"),
       })
       .parse(await jsonBody(req));
-    const task = enqueueAnalysis(id, mode);
+    const task = await enqueueAnalysis(id, mode);
     after(wakeWorker);
     return Response.json({ ok: true, task }, { status: 202 });
   } catch (e) {
@@ -35,8 +40,11 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = authorize(_req);
+  if (denied) return denied;
+
   const { id } = await params;
-  if (!getNode(id))
+  if (!(await getNode(id)))
     return Response.json({ error: "记录不存在" }, { status: 404 });
-  return Response.json({ task: cancelTask(id) });
+  return Response.json({ task: await cancelTask(id) });
 }

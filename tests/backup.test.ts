@@ -20,7 +20,7 @@ const png = Buffer.from(
   "base64",
 );
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value));
-function fixture() {
+async function fixture() {
   const project = {
     id: crypto.randomUUID(),
     name: "恢复项目",
@@ -30,8 +30,8 @@ function fixture() {
     createdAt: new Date().toISOString(),
   };
   // Use the database constructor for a complete, valid record then remove it.
-  const parent = store.newNode({ content: "备份父记录" });
-  store.deleteNode(parent.id);
+  const parent = await store.newNode({ content: "备份父记录" });
+  await store.deleteNode(parent.id);
   parent.projectId = project.id;
   parent.linkImage = "https://example.com/cover.png";
   const child = {
@@ -51,26 +51,26 @@ function fixture() {
     images: [{ name: child.image.slice(11), data: png.toString("base64") }],
   };
 }
-after(() => {
-  store.db.close();
+after(async () => {
+  await store.db.close();
   rmSync(temp, { recursive: true, force: true });
 });
 
-test("完整备份往返保留图片、项目、父子关系，预览不写入且恢复不触发 AI", () => {
-  const source = fixture();
+test("完整备份往返保留图片、项目、父子关系，预览不写入且恢复不触发 AI", async () => {
+  const source = await fixture();
   const bytes = encode(source);
-  const preview = backup.previewBackup(bytes);
+  const preview = await backup.previewBackup(bytes);
   assert.equal(preview.newNodes, 2);
-  assert.equal(store.getNode(source.nodes[0].id), null);
+  assert.equal(await store.getNode(source.nodes[0].id), null);
   assert.equal(readdirSync(uploads).length, 0);
-  backup.restoreBackup(bytes, preview.token);
-  const child = store.getNode(source.nodes[0].id)!;
+  await backup.restoreBackup(bytes, preview.token);
+  const child = (await store.getNode(source.nodes[0].id))!;
   assert.equal(child.parentId, source.nodes[1].id);
   assert.equal(child.projectId, source.projects[0].id);
   assert.equal(child.aiState, "idle");
   assert.equal(child.linkImage, "https://example.com/cover.png");
   assert.equal(
-    store.db.prepare("SELECT count(*) AS n FROM ai_jobs").get()!.n,
+    (await store.db.prepare("SELECT count(*) AS n FROM ai_jobs").get())!.n,
     0,
   );
   assert.deepEqual(
@@ -78,7 +78,7 @@ test("完整备份往返保留图片、项目、父子关系，预览不写入�
     png,
   );
   assert.notEqual(child.image, source.nodes[0].image);
-  const roundtrip = backup.parseBackup(backup.createBackup());
+  const roundtrip = backup.parseBackup(await backup.createBackup());
   assert.equal(roundtrip.images.length, 1);
   assert.equal(roundtrip.images[0].data, png.toString("base64"));
   assert.deepEqual(Object.keys(roundtrip).sort(), [
@@ -90,56 +90,64 @@ test("完整备份往返保留图片、项目、父子关系，预览不写入�
     "version",
   ]);
   // Reimport with a fresh preview is idempotent, preserving edits and attachments.
-  store.patchNode(child.id, { content: "本机最新内容" });
-  const repeated = backup.previewBackup(bytes);
+  await store.patchNode(child.id, { content: "本机最新内容" });
+  const repeated = await backup.previewBackup(bytes);
   const beforeFiles = readdirSync(uploads);
   assert.equal(repeated.skippedNodes, 2);
-  backup.restoreBackup(bytes, repeated.token);
-  assert.equal(store.getNode(child.id)!.content, "本机最新内容");
+  await backup.restoreBackup(bytes, repeated.token);
+  assert.equal((await store.getNode(child.id))!.content, "本机最新内容");
   assert.deepEqual(readdirSync(uploads), beforeFiles);
 });
-test("拒绝过期预览，确认前必须重新检查冲突", () => {
-  const source = fixture();
+test("拒绝过期预览，确认前必须重新检查冲突", async () => {
+  const source = await fixture();
   const bytes = encode(source);
-  const preview = backup.previewBackup(bytes);
-  store.newNode({ ...source.nodes[1], projectId: null });
-  assert.throws(() => backup.restoreBackup(bytes, preview.token), /重新预览/);
-  assert.equal(store.getProject(source.projects[0].id), null);
-  assert.equal(store.getNode(source.nodes[0].id), null);
-  assert.throws(() => backup.restoreBackup(bytes, ""), /重新预览/);
+  const preview = await backup.previewBackup(bytes);
+  await store.newNode({ ...source.nodes[1], projectId: null });
+  await assert.rejects(
+    async () => await backup.restoreBackup(bytes, preview.token),
+    /重新预览/,
+  );
+  assert.equal(await store.getProject(source.projects[0].id), null);
+  assert.equal(await store.getNode(source.nodes[0].id), null);
+  await assert.rejects(
+    async () => await backup.restoreBackup(bytes, ""),
+    /重新预览/,
+  );
 });
-test("旧版备份缺少链接封面字段时仍可预览", () => {
-  const source = fixture();
+test("旧版备份缺少链接封面字段时仍可预览", async () => {
+  const source = await fixture();
   for (const node of source.nodes)
     delete (node as Partial<typeof node>).linkImage;
   const parsed = backup.parseBackup(encode(source));
   assert.equal(parsed.nodes[0].linkImage, null);
 });
-test("损坏、路径穿越、缺图、重复 ID 和循环关联均在写入前拒绝", () => {
+test("损坏、路径穿越、缺图、重复 ID 和循环关联均在写入前拒绝", async () => {
   for (const mutate of [
-    (b: ReturnType<typeof fixture>) => {
+    (b: Awaited<ReturnType<typeof fixture>>) => {
       b.images[0].name = "../../settings.json";
     },
-    (b: ReturnType<typeof fixture>) => {
+    (b: Awaited<ReturnType<typeof fixture>>) => {
       b.images[0].data = Buffer.from("not an image").toString("base64");
     },
-    (b: ReturnType<typeof fixture>) => {
+    (b: Awaited<ReturnType<typeof fixture>>) => {
       b.images = [];
     },
-    (b: ReturnType<typeof fixture>) => {
+    (b: Awaited<ReturnType<typeof fixture>>) => {
       b.nodes.push(b.nodes[0]);
     },
-    (b: ReturnType<typeof fixture>) => {
+    (b: Awaited<ReturnType<typeof fixture>>) => {
       b.nodes[1].parentId = b.nodes[0].id;
     },
-    (b: ReturnType<typeof fixture>) => {
+    (b: Awaited<ReturnType<typeof fixture>>) => {
       b.projects = [];
     },
   ]) {
-    const source = fixture();
+    const source = await fixture();
     mutate(source);
-    assert.throws(() => backup.previewBackup(encode(source)));
-    assert.equal(store.getNode(source.nodes[0].id), null);
+    await assert.rejects(
+      async () => await backup.previewBackup(encode(source)),
+    );
+    assert.equal(await store.getNode(source.nodes[0].id), null);
   }
   assert.throws(() => backup.parseBackup(Buffer.from("broken")), /无法读取/);
   assert.throws(
@@ -147,35 +155,38 @@ test("损坏、路径穿越、缺图、重复 ID 和循环关联均在写入前�
     /版本 2/,
   );
 });
-test("数据库写入失败时，项目、记录及新图片全部回滚", () => {
-  const source = fixture();
+test("数据库写入失败时，项目、记录及新图片全部回滚", async () => {
+  const source = await fixture();
   const bytes = encode(source);
-  const preview = backup.previewBackup(bytes);
+  const preview = await backup.previewBackup(bytes);
   const before = readdirSync(uploads);
-  store.db.exec(
+  await store.db.exec(
     "CREATE TRIGGER backup_failure BEFORE INSERT ON nodes BEGIN SELECT RAISE(ABORT, 'simulated failure'); END;",
   );
   try {
-    assert.throws(
-      () => backup.restoreBackup(bytes, preview.token),
+    await assert.rejects(
+      async () => await backup.restoreBackup(bytes, preview.token),
       /simulated failure/,
     );
   } finally {
-    store.db.exec("DROP TRIGGER backup_failure");
+    await store.db.exec("DROP TRIGGER backup_failure");
   }
   assert.deepEqual(readdirSync(uploads), before);
-  assert.equal(store.getNode(source.nodes[0].id), null);
-  assert.equal(store.getProject(source.projects[0].id), null);
+  assert.equal(await store.getNode(source.nodes[0].id), null);
+  assert.equal(await store.getProject(source.projects[0].id), null);
 });
-test("缺失本机图片时拒绝生成不完整备份", () => {
-  const node = store.newNode({
+test("缺失本机图片时拒绝生成不完整备份", async () => {
+  const node = await store.newNode({
     content: "丢失图片",
     image: `/api/files/${crypto.randomUUID()}.png`,
   });
   try {
-    assert.throws(() => backup.createBackup(), /图片文件缺失/);
+    await assert.rejects(
+      async () => await backup.createBackup(),
+      /图片文件缺失/,
+    );
   } finally {
-    store.deleteNode(node.id);
+    await store.deleteNode(node.id);
   }
 });
 test("请求超出限制时拒绝，包括未声明长度的流式请求", async () => {

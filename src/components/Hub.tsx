@@ -1,4 +1,5 @@
 "use client";
+import { uploadImage } from "@/lib/transfers";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -300,7 +301,12 @@ export default function Hub() {
           <div className="profile">
             <span className="avatar">我</span>
             <div>
-              个人工作空间<small>本地保存 · 随时回来</small>
+              个人工作空间
+              <small>
+                {workspace?.settings.storage === "supabase"
+                  ? "云端保存 · 随时回来"
+                  : "本地保存 · 随时回来"}
+              </small>
             </div>
             <span className="version">MVP</span>
           </div>
@@ -975,12 +981,7 @@ function Composer({
     if (!file || !ready || busy || uploading) return;
     setUploading(true);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const data = await api<{ url: string }>("/api/upload", {
-        method: "POST",
-        body: form,
-      });
+      const data = await uploadImage(file);
       setImage(data.url);
     } catch (e) {
       notify((e as Error).message);

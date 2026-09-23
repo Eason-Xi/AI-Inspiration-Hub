@@ -7,3 +7,5 @@ data/
 *.tsbuildinfo
 test-results/
 playwright-report/
+.vercel/
+supabase/.temp/

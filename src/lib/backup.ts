@@ -1,14 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdirSync,
-  readFileSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import path from "node:path";
+import { readImage, writeImage, removeImage } from "./storage";
+import { cloudStorage } from "./environment";
 import { z } from "zod";
-import { db, dataDir, saveNode, transaction } from "./db";
+import { db, dialect, saveNode, transaction } from "./db";
 import { statuses, type Idea } from "./types";
 import { analysisSchema, projectInput, urlSchema } from "./validation";
 import { imageExtension } from "./images";
@@ -137,79 +131,75 @@ export function parseBackup(bytes: Buffer): Backup {
   return backup;
 }
 
-export function createBackup(): Buffer {
-  return transaction(() => {
-    const size = db
+export async function createBackup(): Promise<Buffer> {
+  const snapshot = await transaction(async () => {
+    const size = await db
       .prepare(
-        "SELECT count(*) AS count, coalesce(sum(length(cast(payload AS BLOB))), 0) AS bytes FROM nodes",
+        dialect(
+          "SELECT count(*) AS count, coalesce(sum(length(cast(payload AS BLOB))),0) AS bytes FROM nodes",
+          "SELECT count(*) AS count, coalesce(sum(octet_length(payload)),0) AS bytes FROM nodes",
+        ),
       )
-      .get()!;
-    const projectCount = db
+      .get();
+    const count = await db
       .prepare("SELECT count(*) AS count FROM projects")
-      .get()!;
+      .get();
     if (
       Number(size.count) > 5000 ||
-      Number(projectCount.count) > 5000 ||
+      Number(count.count) > 5000 ||
       Number(size.bytes) > MAX_BACKUP_BYTES
     )
-      throw new Error("资料库超过完整备份限制，请备份整个 data 文件夹");
-    const nodes = db
-      .prepare("SELECT payload FROM nodes ORDER BY id")
-      .all()
-      .map((r) => JSON.parse(r.payload as string) as Idea);
-    const names = [
-      ...new Set(
-        nodes.flatMap((n) =>
-          n.image ? [n.image.slice("/api/files/".length)] : [],
-        ),
-      ),
-    ];
-    let total = 0;
-    const images = names.map((name) => {
-      if (!imageName.test(name)) throw new Error("记录中存在无效图片路径");
-      const filename = path.join(dataDir, "uploads", name);
-      try {
-        const size = statSync(filename).size;
-        total += size;
-        if (size > 10 * 1024 * 1024 || total > 20 * 1024 * 1024)
-          throw new Error("limit");
-        return { name, data: readFileSync(filename).toString("base64") };
-      } catch (error) {
-        if ((error as Error).message === "limit")
-          throw new Error("图片总量超过备份限制，请备份整个 data 文件夹");
-        throw new Error("部分图片文件缺失或不可读，无法生成完整备份");
-      }
-    });
-    const output = Buffer.from(
-      JSON.stringify({
-        format: "inspiration-hub",
-        version: 2,
-        exportedAt: new Date().toISOString(),
-        projects: db.prepare("SELECT * FROM projects ORDER BY id").all(),
-        nodes,
-        images,
-      }),
-    );
-    parseBackup(output); // Never produce an archive that this version cannot restore.
-    return output;
+      throw new Error("资料库超过完整备份限制，请使用数据库备份");
+    return {
+      nodes: (
+        await db.prepare("SELECT payload FROM nodes ORDER BY id").all()
+      ).map((r) => JSON.parse(String(r.payload)) as Idea),
+      projects: await db.prepare("SELECT * FROM projects ORDER BY id").all(),
+    };
   });
+  // Files are immutable; fetch them after releasing the database transaction.
+  const names = [
+    ...new Set(
+      snapshot.nodes.flatMap((n) => (n.image ? [n.image.slice(11)] : [])),
+    ),
+  ];
+  const images: { name: string; data: string }[] = [];
+  let total = 0;
+  for (const name of names) {
+    if (!imageName.test(name)) throw new Error("记录中存在无效图片路径");
+    let bytes: Buffer;
+    try {
+      bytes = await readImage(name);
+    } catch {
+      throw new Error("部分图片文件缺失或不可读，无法生成完整备份");
+    }
+    total += bytes.length;
+    if (bytes.length > 10 * 1024 * 1024 || total > 20 * 1024 * 1024)
+      throw new Error("图片总量超过备份限制，请使用存储服务备份");
+    images.push({ name, data: bytes.toString("base64") });
+  }
+  const output = Buffer.from(
+    JSON.stringify({
+      format: "inspiration-hub",
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      ...snapshot,
+      images,
+    }),
+  );
+  parseBackup(output);
+  return output;
 }
 
-export function previewBackup(bytes: Buffer): BackupPreview {
-  return plan(parseBackup(bytes), hash(bytes));
+export async function previewBackup(bytes: Buffer): Promise<BackupPreview> {
+  return await plan(parseBackup(bytes), hash(bytes));
 }
-function plan(backup: Backup, digest: string): BackupPreview {
+async function plan(backup: Backup, digest: string): Promise<BackupPreview> {
   const nodeIds = new Set(
-    db
-      .prepare("SELECT id FROM nodes")
-      .all()
-      .map((r) => r.id),
+    (await db.prepare("SELECT id FROM nodes").all()).map((r) => r.id),
   );
   const projectIds = new Set(
-    db
-      .prepare("SELECT id FROM projects")
-      .all()
-      .map((r) => r.id),
+    (await db.prepare("SELECT id FROM projects").all()).map((r) => r.id),
   );
   const existingNodes = backup.nodes
     .filter((n) => nodeIds.has(n.id))
@@ -231,69 +221,87 @@ function plan(backup: Backup, digest: string): BackupPreview {
     skippedProjects: existingProjects.length,
   };
 }
-export function restoreBackup(bytes: Buffer, token: string): BackupPreview {
+export async function restoreBackup(
+  bytes: Buffer,
+  token: string,
+): Promise<BackupPreview> {
   const backup = parseBackup(bytes);
+  const preview = await plan(backup, hash(bytes));
+  if (!token || token !== preview.token)
+    throw new Error("数据或备份已变化，请重新预览再导入");
+  const existing = new Set(
+    (await db.prepare("SELECT id FROM nodes").all()).map((r) => r.id),
+  );
+  const nodes = backup.nodes.filter((n) => !existing.has(n.id));
+  const needed = new Set(
+    nodes.flatMap((n) => (n.image ? [n.image.slice(11)] : [])),
+  );
   const written: string[] = [];
+  const remap = new Map<string, string>();
   try {
-    return transaction(() => {
-      // Reserve the SQLite writer before computing conflicts; other processes cannot race this import.
-      db.prepare("INSERT OR IGNORE INTO meta VALUES ('initialized','1')").run();
-      const preview = plan(backup, hash(bytes));
-      if (!token || token !== preview.token)
+    for (const file of backup.images) {
+      if (!needed.has(file.name)) continue;
+      const name = randomUUID() + "." + file.name.split(".").pop();
+      await writeImage(name, Buffer.from(file.data, "base64"));
+      written.push(name);
+      remap.set("/api/files/" + file.name, "/api/files/" + name);
+    }
+    return await transaction(async () => {
+      // Recheck under the writer lock after the slow storage work.
+      const current = await plan(backup, hash(bytes));
+      if (current.token !== token)
         throw new Error("数据或备份已变化，请重新预览再导入");
-      const hasProject = db.prepare("SELECT id FROM projects WHERE id=?");
-      for (const p of backup.projects) {
-        if (!hasProject.get(p.id))
-          db.prepare("INSERT INTO projects VALUES (?,?,?,?,?,?)").run(
-            p.id,
-            p.name,
-            p.description,
-            p.color,
-            p.status,
-            p.createdAt,
-          );
-      }
-      const hasNode = db.prepare("SELECT id FROM nodes WHERE id=?");
-      const nodes = backup.nodes.filter((n) => !hasNode.get(n.id));
-      const needed = new Set(
-        nodes.flatMap((n) =>
-          n.image ? [n.image.slice("/api/files/".length)] : [],
-        ),
-      );
-      const remap = new Map<string, string>();
-      mkdirSync(path.join(dataDir, "uploads"), {
-        recursive: true,
-        mode: 0o700,
-      });
-      for (const file of backup.images) {
-        if (!needed.has(file.name)) continue;
-        const name = randomUUID() + "." + file.name.split(".").pop();
-        const filename = path.join(dataDir, "uploads", name);
-        // Unique filenames never overwrite an existing attachment.
-        writeFileSync(filename, Buffer.from(file.data, "base64"), {
-          flag: "wx",
-          mode: 0o600,
-        });
-        written.push(filename);
-        remap.set("/api/files/" + file.name, "/api/files/" + name);
-      }
+      await db
+        .prepare(
+          "INSERT INTO meta VALUES ('initialized','1') ON CONFLICT(key) DO NOTHING",
+        )
+        .run();
       const restored = nodes.map((n) => ({
         ...n,
         image: n.image ? remap.get(n.image)! : null,
         aiState: n.analysis ? ("done" as const) : ("idle" as const),
         aiError: null,
       }));
-      // Insert all IDs first so child-before-parent archives also work.
-      for (const node of restored) saveNode({ ...node, parentId: null });
-      for (const node of restored) if (node.parentId) saveNode(node);
-      return preview;
+      if (cloudStorage()) {
+        // Bulk statements keep a 5,000-record import from making thousands of network round trips.
+        await db
+          .prepare(
+            `INSERT INTO projects (id,name,description,color,status,createdAt)
+          SELECT value->>'id',value->>'name',value->>'description',value->>'color',value->>'status',value->>'createdAt'
+          FROM jsonb_array_elements(?::text::jsonb) ON CONFLICT(id) DO NOTHING`,
+          )
+          .run(JSON.stringify(backup.projects));
+        await db
+          .prepare(
+            `INSERT INTO nodes (id,title,content,type,projectId,parentId,status,favorite,createdAt,updatedAt,payload)
+          SELECT value->>'id',value->>'title',value->>'content',value->>'type',value->>'projectId',NULL,
+          value->>'status',CASE WHEN (value->>'favorite')::boolean THEN 1 ELSE 0 END,
+          value->>'createdAt',value->>'updatedAt',value::text FROM jsonb_array_elements(?::text::jsonb)`,
+          )
+          .run(JSON.stringify(restored));
+        await db
+          .prepare(
+            `UPDATE nodes SET parentId=v.value->>'parentId' FROM jsonb_array_elements(?::text::jsonb) AS v(value) WHERE nodes.id=v.value->>'id'`,
+          )
+          .run(JSON.stringify(restored));
+      } else {
+        for (const p of backup.projects)
+          await db
+            .prepare(
+              "INSERT INTO projects VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+            )
+            .run(p.id, p.name, p.description, p.color, p.status, p.createdAt);
+        for (const n of restored) await saveNode({ ...n, parentId: null });
+        for (const n of restored) if (n.parentId) await saveNode(n);
+      }
+      return current;
     });
   } catch (error) {
-    for (const filename of written) {
+    for (const name of written) {
       try {
-        unlinkSync(filename);
+        await removeImage(name);
       } catch {
-        /* Unreferenced files are safe after rollback. */
+        /* Unreferenced uploads can be cleaned later. */
       }
     }
     throw error;

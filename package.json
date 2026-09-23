@@ -12,8 +12,10 @@
     "format": "prettier --write src tests *.ts *.json README.md"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.57.4",
     "lucide-react": "^0.577.0",
     "next": "^16.2.0",
+    "postgres": "3.4.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
@@ -31,6 +33,6 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22.13.0"
+    "node": "24.x"
   }
 }
